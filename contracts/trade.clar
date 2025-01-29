@@ -12,7 +12,7 @@
 (define-public (mint-carbon-credit (recipient principal) (amount uint))
   (begin
     (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u100)) ;; Only owner can mint
-    (nft-mint? carbon-credit amount recipient) ;; Mint NFT
+    (try! (nft-mint? carbon-credit amount recipient)) ;; Mint NFT and handle response
     (var-set total-supply (+ (var-get total-supply) amount)) ;; Update total supply
     (map-set balances recipient (+ (default-to u0 (map-get? balances recipient)) amount)) ;; Update recipient balance
     (ok amount)
@@ -24,7 +24,7 @@
   (begin
     (asserts! (is-eq tx-sender sender) (err u101)) ;; Only sender can initiate transfer
     (asserts! (>= (default-to u0 (map-get? balances sender)) amount) (err u102)) ;; Check sender balance
-    (nft-transfer? carbon-credit amount sender recipient) ;; Transfer NFT
+    (try! (nft-transfer? carbon-credit amount sender recipient)) ;; Transfer NFT and handle response
     (map-set balances sender (- (default-to u0 (map-get? balances sender)) amount)) ;; Deduct from sender
     (map-set balances recipient (+ (default-to u0 (map-get? balances recipient)) amount)) ;; Add to recipient
     (ok amount)
