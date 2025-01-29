@@ -1,30 +1,47 @@
+;; Define the contract
+(define-non-fungible-token carbon-credit uint)
 
-;; title: trade
-;; version:
-;; summary:
-;; description:
+;; Define data structures
+(define-data-var total-supply uint u0)
+(define-map balances principal uint)
 
-;; traits
-;;
+;; Define constants
+(define-constant CONTRACT_OWNER tx-sender)
 
-;; token definitions
-;;
+;; Mint new carbon credits (only contract owner can mint)
+(define-public (mint-carbon-credit (recipient principal) (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u100)) ;; Only owner can mint
+    (nft-mint? carbon-credit amount recipient) ;; Mint NFT
+    (var-set total-supply (+ (var-get total-supply) amount)) ;; Update total supply
+    (map-set balances recipient (+ (default-to u0 (map-get? balances recipient)) amount)) ;; Update recipient balance
+    (ok amount)
+  )
+)
 
-;; constants
-;;
+;; Transfer carbon credits between users
+(define-public (transfer-carbon-credit (sender principal) (recipient principal) (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender sender) (err u101)) ;; Only sender can initiate transfer
+    (asserts! (>= (default-to u0 (map-get? balances sender)) amount) (err u102)) ;; Check sender balance
+    (nft-transfer? carbon-credit amount sender recipient) ;; Transfer NFT
+    (map-set balances sender (- (default-to u0 (map-get? balances sender)) amount)) ;; Deduct from sender
+    (map-set balances recipient (+ (default-to u0 (map-get? balances recipient)) amount)) ;; Add to recipient
+    (ok amount)
+  )
+)
 
-;; data vars
-;;
+;; Get total supply of carbon credits
+(define-read-only (get-total-supply)
+  (ok (var-get total-supply))
+)
 
-;; data maps
-;;
+;; Get balance of a specific user
+(define-read-only (get-balance (user principal))
+  (ok (default-to u0 (map-get? balances user)))
+)
 
-;; public functions
-;;
-
-;; read only functions
-;;
-
-;; private functions
-;;
-
+;; Get owner of a specific carbon credit NFT
+(define-read-only (get-owner (token-id uint))
+  (ok (nft-get-owner? carbon-credit token-id))
+)
