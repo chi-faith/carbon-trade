@@ -6,18 +6,22 @@
 (define-map balances principal uint)
 (define-map expiration-dates uint uint) ;; Maps token ID to expiration date (block height)
 (define-map auctions uint { seller: principal, min-bid: uint, highest-bid: uint, highest-bidder: principal }) ;; Maps token ID to auction details
+(define-map credit-metadata uint { issuer: (string-ascii 50), project-id: (string-ascii 50), vintage-year: uint }) ;; Store metadata for verification
 
 ;; Define constants
 (define-constant CONTRACT_OWNER tx-sender)
+(define-constant MAX_BATCH_SIZE u50) ;; Maximum number of transfers in a batch
 
 ;; Mint new carbon credits (only contract owner can mint)
-(define-public (mint-carbon-credit (recipient principal) (amount uint) (expiration uint))
+(define-public (mint-carbon-credit (recipient principal) (amount uint) (expiration uint) 
+    (issuer (string-ascii 50)) (project-id (string-ascii 50)) (vintage-year uint))
   (begin
     (asserts! (is-eq tx-sender CONTRACT_OWNER) (err u100)) ;; Only owner can mint
     (try! (nft-mint? carbon-credit amount recipient)) ;; Mint NFT and handle response
     (var-set total-supply (+ (var-get total-supply) amount)) ;; Update total supply
     (map-set balances recipient (+ (default-to u0 (map-get? balances recipient)) amount)) ;; Update recipient balance
     (map-set expiration-dates amount expiration) ;; Set expiration date for the minted tokens
+    (map-set credit-metadata amount { issuer: issuer, project-id: project-id, vintage-year: vintage-year }) ;; Store verification metadata
     (ok amount)
   )
 )
@@ -33,6 +37,72 @@
       (map-set balances sender (- (default-to u0 (map-get? balances sender)) amount)) ;; Deduct from sender
       (map-set balances recipient (+ (default-to u0 (map-get? balances recipient)) amount)) ;; Add to recipient
       (ok amount)
+    )
+  )
+)
+
+;; NEW FUNCTIONALITY 1: Batch transfer carbon credits
+(define-public (batch-transfer-carbon-credits (sender principal) 
+    (recipients (list 50 principal)) (amounts (list 50 uint)))
+  (begin
+    (asserts! (is-eq tx-sender sender) (err u101)) ;; Only sender can initiate transfer
+    (asserts! (is-eq (len recipients) (len amounts)) (err u120)) ;; Lists must be same length
+    (asserts! (<= (len recipients) MAX_BATCH_SIZE) (err u121)) ;; Check batch size limit
+    
+    ;; Calculate total amount being transferred
+    (let ((total-amount (fold + amounts u0)))
+      ;; Check if sender has enough balance
+      (asserts! (>= (default-to u0 (map-get? balances sender)) total-amount) (err u102))
+      
+      ;; Perform transfers
+      (map transfer-helper (zip recipients amounts))
+      (ok true)
+    )
+  )
+)
+
+;; Helper function for batch transfers
+(define-private (transfer-helper (transfer {recipient: principal, amount: uint}))
+  (begin
+    (try! (transfer-carbon-credit tx-sender (get recipient transfer) (get amount transfer)))
+    (ok true)
+  )
+)
+
+;; NEW FUNCTIONALITY 2: Cancel auction (only seller can cancel if no bids)
+(define-public (cancel-auction (token-id uint))
+  (begin
+    (let ((auction (unwrap! (map-get? auctions token-id) (err u107)))) ;; Get auction details
+      (let ((seller (get seller auction)))
+        (let ((highest-bid (get highest-bid auction)))
+          (asserts! (is-eq tx-sender seller) (err u110)) ;; Only seller can cancel
+          (asserts! (is-eq highest-bid u0) (err u130)) ;; Can only cancel if no bids
+          (map-delete auctions token-id)
+          (ok token-id)
+        )
+      )
+    )
+  )
+)
+
+;; NEW FUNCTIONALITY 3: Verify carbon credit authenticity and metadata
+(define-public (verify-credit (token-id uint))
+  (begin
+    (let ((metadata (unwrap! (map-get? credit-metadata token-id) (err u140)))) ;; Get metadata
+      (let ((expiration (unwrap! (map-get? expiration-dates token-id) (err u103)))) ;; Get expiration
+        (let ((owner (unwrap! (nft-get-owner? carbon-credit token-id) (err u141)))) ;; Get current owner
+          (ok {
+            owner: owner,
+            issuer: (get issuer metadata),
+            project-id: (get project-id metadata),
+            vintage-year: (get vintage-year metadata),
+            expiration: expiration,
+            is-expired: (<= expiration block-height),
+            is-valid: (and (> expiration block-height) 
+                          (is-some (nft-get-owner? carbon-credit token-id)))
+          })
+        )
+      )
     )
   )
 )
